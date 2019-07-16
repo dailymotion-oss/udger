@@ -30,4 +30,4 @@ func main() {
 
 # Open issues:
 
-- Browser version is not supported since using golang regexp. it require a fic in findData func to support findDataWithVersion func
+- Browser version is not supported since using golang regexp. it require a fix in findData func to support findDataWithVersion func
