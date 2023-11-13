@@ -1,16 +1,29 @@
-package udger_test
+package udger
 
 import (
+	"fmt"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-
-	"github.com/udger/udger"
 )
+
+func ExampleUdger_Lookup() {
+	udger, err := New("./udgerdb_v3.dat")
+	if err != nil {
+		panic(err)
+	}
+
+	info, err := udger.Lookup("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/49.0.2575.0 Safari/537.36")
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(info.Browser.Family, info.OS.Family)
+	// output: Chrome OS X
+}
 
 func TestInvalidDbName(t *testing.T) {
 	Convey("load invalid path", t, func() {
-		udger, err := udger.New("./toto.dat")
+		udger, err := New("./should_not_exit.dat")
 		So(err, ShouldNotBeNil)
 		So(udger, ShouldBeNil)
 	})
@@ -18,7 +31,7 @@ func TestInvalidDbName(t *testing.T) {
 
 func TestValidDbName(t *testing.T) {
 	Convey("load valid path", t, func() {
-		udger, err := udger.New("./udgerdb_v3.dat")
+		udger, err := New("./udgerdb_v3.dat")
 		So(err, ShouldBeNil)
 		So(udger, ShouldNotBeNil)
 
@@ -33,7 +46,7 @@ func TestValidDbName(t *testing.T) {
 				So(info, ShouldNotBeNil)
 
 				Convey("test lookup info", func() {
-					So(info.OS.Company, ShouldResemble, "Apple Computer, Inc.")
+					So(info.OS.Company, ShouldResemble, "Apple Inc.")
 					So(info.OS.Family, ShouldResemble, "OS X")
 					So(info.OS.Icon, ShouldResemble, "macosx.png")
 					So(info.OS.Name, ShouldResemble, "OS X 10.11 El Capitan")
@@ -108,7 +121,7 @@ func TestValidDbName(t *testing.T) {
 					So(info.OS.Company, ShouldResemble, "Apple Inc.")
 					So(info.OS.Family, ShouldResemble, "iOS")
 					So(info.OS.Icon, ShouldResemble, "iphone.png")
-					//So(info.OS.Name, ShouldResemble, "iOS 9")
+					So(info.OS.Name, ShouldResemble, "iOS 9")
 
 					So(info.Device.Name, ShouldResemble, "Smartphone")
 					So(info.Device.Icon, ShouldResemble, "phone.png")
@@ -124,4 +137,18 @@ func TestValidDbName(t *testing.T) {
 			})
 		})
 	})
+}
+
+func BenchmarkUdger_Lookup(b *testing.B) {
+	udger, err := New("./udgerdb_v3.dat")
+	if err != nil {
+		panic(err)
+	}
+
+	for i := 0; i < b.N; i++ {
+		_, err = udger.Lookup("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/49.0.2575.0 Safari/537.36")
+		if err != nil {
+			panic(err)
+		}
+	}
 }

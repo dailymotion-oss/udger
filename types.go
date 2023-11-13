@@ -18,7 +18,6 @@ type Udger struct {
 	Browsers     map[int]Browser
 	OS           map[int]OS
 	Devices      map[int]Device
-	Flags        *Flags
 }
 
 // Info is the struct returned by the Lookup(ua string) function, contains everything about the UA
@@ -28,7 +27,7 @@ type Info struct {
 	Device  Device  `json:"device"`
 }
 
-// Browser contains information about the browser type, engine and off course it's name
+// Browser contains information about the browser type, engine and off course its name
 type Browser struct {
 	Name    string `json:"name"`
 	Family  string `json:"family"`
