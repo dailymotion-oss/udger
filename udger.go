@@ -42,12 +42,16 @@ func (udger *Udger) Lookup(ua string) (*Info, error) {
 	info := &Info{}
 
 	browserID, browserVersion := udger.findDataWithVersion(ua, udger.rexBrowsers, true)
-	info.Browser = udger.Browsers[browserID]
-	if info.Browser.Family != "" {
-		info.Browser.Name = info.Browser.Family + " " + browserVersion
+	if browser, found := udger.Browsers[browserID]; found {
+		info.Browser = browser
+		if info.Browser.Family != "" {
+			info.Browser.Name = browser.Family + " " + browserVersion
+		}
+		info.Browser.Version = browserVersion
+		info.Browser.Type = udger.browserTypes[browser.typ]
+	} else {
+		info.Browser.typ = -1
 	}
-	info.Browser.Version = browserVersion
-	info.Browser.Type = udger.browserTypes[info.Browser.typ]
 
 	if val, ok := udger.browserOS[browserID]; ok {
 		info.OS = udger.OS[val]
@@ -60,7 +64,9 @@ func (udger *Udger) Lookup(ua string) (*Info, error) {
 
 	if val, ok := udger.Devices[deviceID]; ok {
 		info.Device = val
-	} else if info.Browser.typ == 3 { // if browser is mobile, we can guess its a mobile
+	} else if info.Browser.typ == -1 { // empty
+		// pass
+	} else if info.Browser.typ == 3 { // if browser is mobile, we can guess it's a mobile
 		info.Device = Device{
 			Name: "Smartphone",
 			Icon: "phone.png",

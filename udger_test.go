@@ -40,6 +40,30 @@ func TestValidDbName(t *testing.T) {
 			So(len(udger.Devices), ShouldBeGreaterThan, 0)
 			So(len(udger.OS), ShouldBeGreaterThan, 0)
 
+			Convey("test empty", func() {
+				info, err := udger.Lookup("")
+				So(err, ShouldBeNil)
+				So(info, ShouldNotBeNil)
+
+				Convey("test lookup info", func() {
+					So(info.OS.Company, ShouldResemble, "")
+					So(info.OS.Family, ShouldResemble, "")
+					So(info.OS.Icon, ShouldResemble, "")
+					So(info.OS.Name, ShouldResemble, "")
+
+					So(info.Device.Name, ShouldResemble, "")
+					So(info.Device.Icon, ShouldResemble, "")
+
+					So(info.Browser.Company, ShouldResemble, "")
+					So(info.Browser.Engine, ShouldResemble, "")
+					So(info.Browser.Family, ShouldResemble, "")
+					So(info.Browser.Icon, ShouldResemble, "")
+					So(info.Browser.Name, ShouldResemble, "")
+					So(info.Browser.Type, ShouldResemble, "")
+					So(info.Browser.Version, ShouldResemble, "")
+				})
+			})
+
 			Convey("test lookup MAC", func() {
 				info, err := udger.Lookup("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/49.0.2575.0 Safari/537.36")
 				So(err, ShouldBeNil)
