@@ -1,33 +1,19 @@
-# Udger golang (format V3):
+# Udger Golang
 
-This package is a fork of github.com/udger/udger with the following changes:
-- Using golang regexp instead of github.com/glenn-brown/golang-pkg-pcre
-- Supporting partial UA parsing by constructor flags (device, browser, os)
+This package reads in memory all the database from [Udger](https://udger.com/) and lets you lookup for user agent's metadata. The parsing only relies on the golang standard library regex. Only the **Udger Data v3 - Sqlite3 format** is supported.   
 
-# Usage:
+This package is a fork of https://github.com/yoavfeld/udger itself forked from https://github.com/udger/udger.
 
-```
-package main
+## Tests / Benchmarks
 
-import (
-  "github.com/yoavfeld/udger"
-)
+To run tests and benchmarks you need to have the Udger database `udgerdb_v3.dat` located in this folder.
 
-func main() {
-  client, err := udger.New("udgerDBv3FilePath", &udger.Flags{Device: true})
-  if err != nil {
-     log.Fatal(err)
-  }
-  ua := "Mozilla/5.0 (Linux; Android 4.4.4; MI PAD Build/KTU84P) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/33.0.0.0 Safari/537.36"
-  res,err := client.Lookup(ua)
-  if err != nil {
-    log.Fatal(err)
-  }
-}
-
-
+To run unit tests  and run:
+```shell
+go tests ./...
 ```
 
-# Open issues:
-
-- Browser version is not supported since using golang regexp. it require a fix in findData func to support findDataWithVersion func
+To run tests with benchmarks:
+```shell
+go test -bench=.
+```

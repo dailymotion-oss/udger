@@ -1,3 +1,11 @@
-*~
+# Editors
 *#
+*~
+.idea
+.vscode
+
+# OS
+.DS_Store
+
+# Database
 *.dat
