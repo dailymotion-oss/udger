@@ -159,6 +159,35 @@ func TestValidDbName(t *testing.T) {
 					So(info.Browser.Version, ShouldResemble, "")
 				})
 			})
+
+			Convey("test Crawler", func() {
+				info, err := udger.Lookup("Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)")
+				So(err, ShouldBeNil)
+				So(info, ShouldNotBeNil)
+
+				Convey("test lookup info", func() {
+					So(info.OS.Company, ShouldResemble, "")
+					So(info.OS.Family, ShouldResemble, "")
+					So(info.OS.Icon, ShouldResemble, "")
+					So(info.OS.Name, ShouldResemble, "")
+
+					So(info.Device.Name, ShouldResemble, "Personal computer")
+					So(info.Device.Icon, ShouldResemble, "desktop.png")
+
+					So(info.Browser.Company, ShouldResemble, "")
+					So(info.Browser.Engine, ShouldResemble, "")
+					So(info.Browser.Family, ShouldResemble, "")
+					So(info.Browser.Icon, ShouldResemble, "")
+					So(info.Browser.Name, ShouldResemble, "")
+					So(info.Browser.Type, ShouldResemble, "Crawler")
+					So(info.Browser.Version, ShouldResemble, "")
+
+					So(info.Crawler.Name, ShouldResemble, "Googlebot Desktop")
+					So(info.Crawler.Family, ShouldResemble, "Googlebot")
+					So(info.Crawler.Vendor, ShouldResemble, "Google Inc.")
+					So(info.Crawler.Class, ShouldResemble, "Search engine bot")
+				})
+			})
 		})
 	})
 }
