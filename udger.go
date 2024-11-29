@@ -82,7 +82,7 @@ func (udger *Udger) Lookup(ua string) (*Info, error) {
 			Name: "Smartphone",
 			Icon: "phone.png",
 		}
-	} else if info.Browser.typ == 5 || info.Browser.typ == 10 || info.Browser.typ == 20 || info.Browser.typ == 50 {
+	} else if info.Browser.typ == 5 || info.Browser.typ == 10 || info.Browser.typ == 20 || info.Browser.typ == 50 || info.Browser.typ == CRAWLER_CLASS_ID {
 		info.Device = Device{
 			Name: "Other",
 			Icon: "other.png",

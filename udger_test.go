@@ -171,8 +171,8 @@ func TestValidDbName(t *testing.T) {
 					So(info.OS.Icon, ShouldResemble, "")
 					So(info.OS.Name, ShouldResemble, "")
 
-					So(info.Device.Name, ShouldResemble, "Personal computer")
-					So(info.Device.Icon, ShouldResemble, "desktop.png")
+					So(info.Device.Name, ShouldResemble, "Other")
+					So(info.Device.Icon, ShouldResemble, "other.png")
 
 					So(info.Browser.Company, ShouldResemble, "")
 					So(info.Browser.Engine, ShouldResemble, "")
