@@ -8,6 +8,8 @@ import (
 	"strings"
 )
 
+const CRAWLER_CLASS_ID = 99
+
 // New creates a new instance of Udger from the dbPath database loaded in memory for fast lookup.
 func New(dbPath string) (*Udger, error) {
 	u := &Udger{
@@ -16,6 +18,8 @@ func New(dbPath string) (*Udger, error) {
 		Devices:      make(map[int]Device),
 		browserTypes: make(map[int]string),
 		browserOS:    make(map[int]int),
+		crawlerTypes: make(map[int]string),
+		Crawlers:     make(map[string]Crawler),
 	}
 	var err error
 
@@ -53,6 +57,13 @@ func (udger *Udger) Lookup(ua string) (*Info, error) {
 		info.Browser.typ = -1
 	}
 
+	if crawler, found := udger.Crawlers[ua]; found {
+		info.Crawler = crawler
+		info.Crawler.Class = udger.crawlerTypes[crawler.ClassId]
+		info.Browser.typ = CRAWLER_CLASS_ID
+		info.Browser.Type = udger.browserTypes[CRAWLER_CLASS_ID]
+	}
+
 	if val, ok := udger.browserOS[browserID]; ok {
 		info.OS = udger.OS[val]
 	} else {
@@ -71,7 +82,7 @@ func (udger *Udger) Lookup(ua string) (*Info, error) {
 			Name: "Smartphone",
 			Icon: "phone.png",
 		}
-	} else if info.Browser.typ == 5 || info.Browser.typ == 10 || info.Browser.typ == 20 || info.Browser.typ == 50 {
+	} else if info.Browser.typ == 5 || info.Browser.typ == 10 || info.Browser.typ == 20 || info.Browser.typ == 50 || info.Browser.typ == CRAWLER_CLASS_ID {
 		info.Device = Device{
 			Name: "Other",
 			Icon: "other.png",
@@ -88,13 +99,8 @@ func (udger *Udger) Lookup(ua string) (*Info, error) {
 
 func (udger *Udger) cleanRegex(r string) string {
 	// removes single-line and case-insensitive modifiers
-	if strings.HasSuffix(r, "/si") {
-		r = r[:len(r)-3]
-	}
-	if strings.HasPrefix(r, "/") {
-		r = r[1:]
-	}
-
+	r = strings.TrimSuffix(r, "/si")
+	r = strings.TrimPrefix(r, "/")
 	return r
 }
 
@@ -126,6 +132,9 @@ func (udger *Udger) init() error {
 		return err
 	}
 	if err := udger.initOS(); err != nil {
+		return err
+	}
+	if err := udger.initCrawlers(); err != nil {
 		return err
 	}
 	return nil
@@ -249,6 +258,34 @@ func (udger *Udger) initOS() error {
 		var id int
 		rows.Scan(&id, &d.Name, &d.Family, &d.Company, &d.Icon)
 		udger.OS[id] = d
+	}
+	rows.Close()
+	return nil
+}
+
+func (udger *Udger) initCrawlers() error {
+	// Uncategorised, Search engine bot, Site monitor, etc.
+	rows, err := udger.db.Query("SELECT id, crawler_classification FROM udger_crawler_class")
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var crawlerClass string
+		var id int
+		rows.Scan(&id, &crawlerClass)
+		udger.crawlerTypes[id] = crawlerClass
+	}
+	rows.Close()
+
+	rows, err = udger.db.Query("SELECT ua_string, name, family, vendor, class_id FROM udger_crawler_list")
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var crawler Crawler
+		var uaString string
+		rows.Scan(&uaString, &crawler.Name, &crawler.Family, &crawler.Vendor, &crawler.ClassId)
+		udger.Crawlers[uaString] = crawler
 	}
 	rows.Close()
 	return nil

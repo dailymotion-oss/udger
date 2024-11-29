@@ -18,6 +18,8 @@ type Udger struct {
 	Browsers     map[int]Browser
 	OS           map[int]OS
 	Devices      map[int]Device
+	crawlerTypes map[int]string
+	Crawlers     map[string]Crawler
 }
 
 // Info is the struct returned by the Lookup(ua string) function, contains everything about the UA
@@ -25,6 +27,7 @@ type Info struct {
 	Browser Browser `json:"browser"`
 	OS      OS      `json:"os"`
 	Device  Device  `json:"device"`
+	Crawler Crawler `json:"crawler"`
 }
 
 // Browser contains information about the browser type, engine and off course its name
@@ -57,4 +60,13 @@ type OS struct {
 type Device struct {
 	Name string `json:"name"`
 	Icon string `json:"icon"`
+}
+
+// Crawler contains all the information about the crawler
+type Crawler struct {
+	Name    string `json:"name"`
+	Family  string `json:"family"`
+	Vendor  string `json:"vendor"`
+	ClassId int
+	Class   string `json:"classification"`
 }
