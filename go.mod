@@ -1,9 +1,9 @@
 module github.com/dailymotion-oss/udger
 
-go 1.20
+go 1.25
 
 require (
-	github.com/mattn/go-sqlite3 v1.14.18
+	github.com/mattn/go-sqlite3 v1.14.33
 	github.com/smartystreets/goconvey v1.8.1
 )
 

@@ -9,25 +9,30 @@ import (
 
 // Udger contains the data and exposes the Lookup(ua string) function
 type Udger struct {
-	db           *sql.DB
-	rexBrowsers  []rexData
-	rexDevices   []rexData
-	rexOS        []rexData
-	browserTypes map[int]string
-	browserOS    map[int]int
-	Browsers     map[int]Browser
-	OS           map[int]OS
-	Devices      map[int]Device
-	crawlerTypes map[int]string
-	Crawlers     map[string]Crawler
+	db                *sql.DB
+	rexBrowsers       []rexData
+	rexDevices        []rexData
+	rexDeviceNames    []rexData
+	rexOS             []rexData
+	browserTypes      map[int]string
+	browserOS         map[int]int
+	Browsers          map[int]Browser
+	OS                map[int]OS
+	Devices           map[int]Device
+	DevicesMarketName map[string]DeviceMarketName
+	DevicesBrand      map[int]DeviceBrand
+	crawlerTypes      map[int]string
+	Crawlers          map[string]Crawler
 }
 
 // Info is the struct returned by the Lookup(ua string) function, contains everything about the UA
 type Info struct {
-	Browser Browser `json:"browser"`
-	OS      OS      `json:"os"`
-	Device  Device  `json:"device"`
-	Crawler Crawler `json:"crawler"`
+	Browser          Browser          `json:"browser"`
+	OS               OS               `json:"os"`
+	Device           Device           `json:"device"`
+	Crawler          Crawler          `json:"crawler"`
+	DeviceBrand      DeviceBrand      `json:"deviceBrand"`
+	DeviceMarketName DeviceMarketName `json:"deviceMarketName"`
 }
 
 // Browser contains information about the browser type, engine and off course its name
@@ -60,6 +65,16 @@ type OS struct {
 type Device struct {
 	Name string `json:"name"`
 	Icon string `json:"icon"`
+}
+
+type DeviceMarketName struct {
+	Code    string `json:"code"`
+	Name    string `json:"name"`
+	BrandID int    `json:"brand_id"`
+}
+
+type DeviceBrand struct {
+	Name string `json:"name"`
 }
 
 // Crawler contains all the information about the crawler

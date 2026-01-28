@@ -13,13 +13,15 @@ const CRAWLER_CLASS_ID = 99
 // New creates a new instance of Udger from the dbPath database loaded in memory for fast lookup.
 func New(dbPath string) (*Udger, error) {
 	u := &Udger{
-		Browsers:     make(map[int]Browser),
-		OS:           make(map[int]OS),
-		Devices:      make(map[int]Device),
-		browserTypes: make(map[int]string),
-		browserOS:    make(map[int]int),
-		crawlerTypes: make(map[int]string),
-		Crawlers:     make(map[string]Crawler),
+		Browsers:          make(map[int]Browser),
+		OS:                make(map[int]OS),
+		Devices:           make(map[int]Device),
+		DevicesBrand:      make(map[int]DeviceBrand),
+		DevicesMarketName: make(map[string]DeviceMarketName),
+		browserTypes:      make(map[int]string),
+		browserOS:         make(map[int]int),
+		crawlerTypes:      make(map[int]string),
+		Crawlers:          make(map[string]Crawler),
 	}
 	var err error
 
@@ -94,6 +96,14 @@ func (udger *Udger) Lookup(ua string) (*Info, error) {
 			Icon: "desktop.png",
 		}
 	}
+
+	// find device brand and market name
+	_, s := udger.findDataWithVersion(ua, udger.rexDeviceNames, true)
+	if val, ok := udger.DevicesMarketName[s]; ok {
+		info.DeviceMarketName = val
+		info.DeviceBrand = udger.DevicesBrand[val.BrandID]
+	}
+
 	return info, nil
 }
 
@@ -228,6 +238,49 @@ func (udger *Udger) initDevices() error {
 		udger.Devices[id] = d
 	}
 	rows.Close()
+
+	rows, err = udger.db.Query("SELECT id, regstring FROM udger_devicename_regex ORDER by sequence ASC")
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var d rexData
+		rows.Scan(&d.ID, &d.Regex)
+		d.Regex = udger.cleanRegex(d.Regex)
+		r, err := regexp.Compile("(?i)" + d.Regex)
+		if err != nil {
+			return err
+		}
+		d.RegexCompiled = r
+		udger.rexDeviceNames = append(udger.rexDeviceNames, d)
+	}
+	rows.Close()
+
+	rows, err = udger.db.Query("SELECT code, marketname, brand_id FROM udger_devicename_list")
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var d DeviceMarketName
+		var code string
+		rows.Scan(&code, &d.Name, &d.BrandID)
+		d.Code = code
+		udger.DevicesMarketName[code] = d
+	}
+	rows.Close()
+
+	rows, err = udger.db.Query("SELECT id, brand FROM udger_devicename_brand")
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var d DeviceBrand
+		var id int
+		rows.Scan(&id, &d.Name)
+		udger.DevicesBrand[id] = d
+	}
+	rows.Close()
+
 	return nil
 }
 
