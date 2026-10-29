@@ -2,6 +2,9 @@ package udger
 
 import (
 	"fmt"
+	"regexp/syntax"
+	"sort"
+	"strings"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -192,6 +195,21 @@ func TestValidDbName(t *testing.T) {
 	})
 }
 
+func TestRequiredLiterals(t *testing.T) {
+	Convey("required literals ignore optional parts and alternations", t, func() {
+		for regex, expected := range map[string][]string{
+			`Linux.*?Android 11; (AFTN|Fire HD10)`: {"linux", "android 11; "},
+			`^Mozilla/\d\.0 \(.*; Catchpoint\)`:    {"mozilla/", ".0 (", "; catchpoint)"},
+			`(Opera)?Mini/([0-9.]+)`:               {"mini/"},
+			`(abc){2}x?`:                           {"abc"},
+		} {
+			re, err := syntax.Parse("(?i)"+regex, syntax.Perl)
+			So(err, ShouldBeNil)
+			So(requiredLiterals(re), ShouldResemble, expected)
+		}
+	})
+}
+
 func BenchmarkUdger_Lookup(b *testing.B) {
 	udger, err := New("./udgerdb_v3.dat")
 	if err != nil {
@@ -200,6 +218,73 @@ func BenchmarkUdger_Lookup(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		_, err = udger.Lookup("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/49.0.2575.0 Safari/537.36")
+		if err != nil {
+			panic(err)
+		}
+	}
+}
+
+func TestWordsPrefilter(t *testing.T) {
+	Convey("prefiltering regexes with words gives the same result as a full scan", t, func() {
+		udger, err := New("./udgerdb_v3.dat")
+		So(err, ShouldBeNil)
+
+		uas := append([]string{""}, userAgents...)
+		// a sample of crawlers, sorted to be deterministic: a full scan of all of them is too slow
+		var crawlers []string
+		for ua := range udger.Crawlers {
+			crawlers = append(crawlers, ua)
+		}
+		sort.Strings(crawlers)
+		for i := 0; i < len(crawlers); i += 20 {
+			uas = append(uas, crawlers[i])
+		}
+
+		for _, ua := range uas {
+			lowerUA := strings.ToLower(ua)
+			for _, table := range []struct {
+				rex         []rexData
+				words       []rexWord
+				withVersion bool
+			}{
+				{udger.rexBrowsers, udger.wordsBrowsers, true},
+				{udger.rexOS, udger.wordsOS, false},
+				{udger.rexDevices, udger.wordsDevices, false},
+			} {
+				fullID, fullVersion := udger.findDataWithVersion(ua, table.rex, nil, table.withVersion)
+				id, version := udger.findDataWithVersion(ua, table.rex, findWords(lowerUA, table.words), table.withVersion)
+				So(id, ShouldEqual, fullID)
+				So(version, ShouldEqual, fullVersion)
+			}
+		}
+	})
+}
+
+// userAgents is a sample of common user agents: browsers, mobiles, smart TVs and libraries
+var userAgents = []string{
+	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/49.0.2575.0 Safari/537.36",
+	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0",
+	"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:131.0) Gecko/20100101 Firefox/131.0",
+	"Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1",
+	"Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36",
+	"Mozilla/5.0 (Linux; x86_64 GNU/Linux) AppleWebKit/601.1 (KHTML, like Gecko) Version/8.0 Safari/601.1 WPE AAMP/4.6",
+	"Mozilla/5.0 (SMART-TV; Linux; Tizen 6.0) AppleWebKit/538.1 (KHTML, like Gecko) Version/6.0 TV Safari/538.1",
+	"Mozilla/5.0 (Web0S; Linux/SmartTV) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.270 Safari/537.36 WebAppManager",
+	"Dalvik/2.1.0 (Linux; U; Android 11; BboxTV Build/RTT1.200907.001)",
+	"Roku/DVP-15.3 (15.3.4.2402-AE)",
+	"Apache-HttpClient/4.5.13 (Java/11.0.12)",
+	// matches a Fire OS regex through "AFTN" while Udger tags it with the word "fire" from another alternation branch
+	"XumoPlay/4.9.146 (Linux;Android 11; AFTNA1322D Build/RS8174.3641N)",
+}
+
+func BenchmarkUdger_LookupUserAgents(b *testing.B) {
+	udger, err := New("./udgerdb_v3.dat")
+	if err != nil {
+		panic(err)
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err = udger.Lookup(userAgents[i%len(userAgents)])
 		if err != nil {
 			panic(err)
 		}
