@@ -17,6 +17,7 @@ type Udger struct {
 	wordsBrowsers     []rexWord
 	wordsDevices      []rexWord
 	wordsOS           []rexWord
+	wordsPrefilter    bool
 	browserTypes      map[int]string
 	browserOS         map[int]int
 	Browsers          map[int]Browser

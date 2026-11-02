@@ -14,6 +14,12 @@ const CRAWLER_CLASS_ID = 99
 
 // New creates a new instance of Udger from the dbPath database loaded in memory for fast lookup.
 func New(dbPath string) (*Udger, error) {
+	return newUdger(dbPath, true)
+}
+
+// newUdger creates a new instance of Udger. When wordsPrefilter is set, Lookup skips the browser, OS and device regexes
+// whose required words are absent from the user agent; otherwise every regex is evaluated, which tests use as reference.
+func newUdger(dbPath string, wordsPrefilter bool) (*Udger, error) {
 	u := &Udger{
 		Browsers:          make(map[int]Browser),
 		OS:                make(map[int]OS),
@@ -24,6 +30,7 @@ func New(dbPath string) (*Udger, error) {
 		browserOS:         make(map[int]int),
 		crawlerTypes:      make(map[int]string),
 		Crawlers:          make(map[string]Crawler),
+		wordsPrefilter:    wordsPrefilter,
 	}
 	var err error
 
@@ -51,7 +58,7 @@ func (udger *Udger) Lookup(ua string) (*Info, error) {
 
 	lowerUA := strings.ToLower(ua)
 
-	browserID, browserVersion := udger.findDataWithVersion(ua, udger.rexBrowsers, findWords(lowerUA, udger.wordsBrowsers), true)
+	browserID, browserVersion := udger.findDataWithVersion(ua, udger.rexBrowsers, udger.findWords(lowerUA, udger.wordsBrowsers), true)
 	if browser, found := udger.Browsers[browserID]; found {
 		info.Browser = browser
 		if info.Browser.Family != "" {
@@ -73,11 +80,11 @@ func (udger *Udger) Lookup(ua string) (*Info, error) {
 	if val, ok := udger.browserOS[browserID]; ok {
 		info.OS = udger.OS[val]
 	} else {
-		osID, _ := udger.findDataWithVersion(ua, udger.rexOS, findWords(lowerUA, udger.wordsOS), false)
+		osID, _ := udger.findDataWithVersion(ua, udger.rexOS, udger.findWords(lowerUA, udger.wordsOS), false)
 		info.OS = udger.OS[osID]
 	}
 
-	deviceID, _ := udger.findDataWithVersion(ua, udger.rexDevices, findWords(lowerUA, udger.wordsDevices), false)
+	deviceID, _ := udger.findDataWithVersion(ua, udger.rexDevices, udger.findWords(lowerUA, udger.wordsDevices), false)
 
 	if val, ok := udger.Devices[deviceID]; ok {
 		info.Device = val
@@ -119,9 +126,13 @@ func (udger *Udger) cleanRegex(r string) string {
 }
 
 // findWords returns the IDs of the words contained in the lowercased user agent. ID 0 (no word) is always present.
-// It returns nil for non-ASCII user agents: case-insensitive regexes match some non-ASCII runes as ASCII letters
-// (e.g. "ſ" matches "s"), which strings.Contains would miss.
-func findWords(lowerUA string, words []rexWord) map[int]bool {
+// It returns nil, meaning a full scan, when the words prefilter is disabled and for non-ASCII user agents:
+// case-insensitive regexes match some non-ASCII runes as ASCII letters (e.g. "ſ" matches "s"), which strings.Contains
+// would miss.
+func (udger *Udger) findWords(lowerUA string, words []rexWord) map[int]bool {
+	if !udger.wordsPrefilter {
+		return nil
+	}
 	for i := 0; i < len(lowerUA); i++ {
 		if lowerUA[i] > unicode.MaxASCII {
 			return nil
@@ -196,12 +207,14 @@ func (udger *Udger) initBrowsers() error {
 	}
 	rows.Close()
 
-	udger.wordsBrowsers, err = udger.loadWords("udger_client_regex_words")
-	if err != nil {
-		return err
-	}
-	if err := dropUnsafeWords(udger.rexBrowsers, udger.wordsBrowsers); err != nil {
-		return err
+	if udger.wordsPrefilter {
+		udger.wordsBrowsers, err = udger.loadWords("udger_client_regex_words")
+		if err != nil {
+			return err
+		}
+		if err := dropUnsafeWords(udger.rexBrowsers, udger.wordsBrowsers); err != nil {
+			return err
+		}
 	}
 
 	// Chrome, Safari, Firefox, etc.
@@ -262,12 +275,14 @@ func (udger *Udger) initDevices() error {
 	}
 	rows.Close()
 
-	udger.wordsDevices, err = udger.loadWords("udger_deviceclass_regex_words")
-	if err != nil {
-		return err
-	}
-	if err := dropUnsafeWords(udger.rexDevices, udger.wordsDevices); err != nil {
-		return err
+	if udger.wordsPrefilter {
+		udger.wordsDevices, err = udger.loadWords("udger_deviceclass_regex_words")
+		if err != nil {
+			return err
+		}
+		if err := dropUnsafeWords(udger.rexDevices, udger.wordsDevices); err != nil {
+			return err
+		}
 	}
 
 	rows, err = udger.db.Query("SELECT id, name, icon FROM udger_deviceclass_list")
@@ -345,12 +360,14 @@ func (udger *Udger) initOS() error {
 	}
 	rows.Close()
 
-	udger.wordsOS, err = udger.loadWords("udger_os_regex_words")
-	if err != nil {
-		return err
-	}
-	if err := dropUnsafeWords(udger.rexOS, udger.wordsOS); err != nil {
-		return err
+	if udger.wordsPrefilter {
+		udger.wordsOS, err = udger.loadWords("udger_os_regex_words")
+		if err != nil {
+			return err
+		}
+		if err := dropUnsafeWords(udger.rexOS, udger.wordsOS); err != nil {
+			return err
+		}
 	}
 
 	rows, err = udger.db.Query("SELECT id, name, family, vendor, icon FROM udger_os_list")

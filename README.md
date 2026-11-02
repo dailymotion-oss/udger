@@ -17,3 +17,10 @@ To run tests with benchmarks:
 ```shell
 go test -bench=.
 ```
+
+## Words prefilter
+
+`Lookup` skips the browser, OS and device regexes whose required words (from the Udger word index) are absent from the
+user agent, which makes it much faster. `TestWordsPrefilterLookup` checks that it gives the same `Lookup` results as
+evaluating every regex on the `userAgents` list of `udger_test.go`, and `go test -bench=.` reports the time taken by
+both modes.
