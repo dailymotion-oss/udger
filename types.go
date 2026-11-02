@@ -14,6 +14,10 @@ type Udger struct {
 	rexDevices        []rexData
 	rexDeviceNames    []rexData
 	rexOS             []rexData
+	wordsBrowsers     []rexWord
+	wordsDevices      []rexWord
+	wordsOS           []rexWord
+	wordsPrefilter    bool
 	browserTypes      map[int]string
 	browserOS         map[int]int
 	Browsers          map[int]Browser
@@ -51,6 +55,15 @@ type rexData struct {
 	ID            int
 	Regex         string
 	RegexCompiled *regexp.Regexp
+	// WordID and Word2ID reference words that must be present in the user agent for the regex to match (0 means no word)
+	WordID  int
+	Word2ID int
+}
+
+// rexWord is a lowercase word used to discard regexes that cannot match before evaluating them
+type rexWord struct {
+	ID   int
+	Word string
 }
 
 // OS contains all the information about the operating system

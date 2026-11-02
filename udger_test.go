@@ -1,8 +1,18 @@
 package udger
 
 import (
+	"bufio"
 	"fmt"
+	"os"
+	"reflect"
+	"regexp/syntax"
+	"runtime"
+	"sort"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
@@ -192,16 +202,204 @@ func TestValidDbName(t *testing.T) {
 	})
 }
 
+func TestRequiredLiterals(t *testing.T) {
+	Convey("required literals ignore optional parts and alternations", t, func() {
+		for regex, expected := range map[string][]string{
+			`Linux.*?Android 11; (AFTN|Fire HD10)`: {"linux", "android 11; "},
+			`^Mozilla/\d\.0 \(.*; Catchpoint\)`:    {"mozilla/", ".0 (", "; catchpoint)"},
+			`(Opera)?Mini/([0-9.]+)`:               {"mini/"},
+			`(abc){2}x?`:                           {"abc"},
+		} {
+			re, err := syntax.Parse("(?i)"+regex, syntax.Perl)
+			So(err, ShouldBeNil)
+			So(requiredLiterals(re), ShouldResemble, expected)
+		}
+	})
+}
+
 func BenchmarkUdger_Lookup(b *testing.B) {
-	udger, err := New("./udgerdb_v3.dat")
+	benchmarkLookup(b, []string{"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/49.0.2575.0 Safari/537.36"})
+}
+
+// benchmarkLookup reports the time taken by Lookup on uas, with and without the words prefilter
+func benchmarkLookup(b *testing.B, uas []string) {
+	for _, prefilter := range []bool{false, true} {
+		b.Run(fmt.Sprintf("wordsPrefilter=%v", prefilter), func(b *testing.B) {
+			udger, err := newUdger("./udgerdb_v3.dat", prefilter)
+			if err != nil {
+				panic(err)
+			}
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				_, err = udger.Lookup(uas[i%len(uas)])
+				if err != nil {
+					panic(err)
+				}
+			}
+		})
+	}
+}
+
+func TestWordsPrefilterLookup(t *testing.T) {
+	Convey("Lookup gives the same result with and without the words prefilter", t, func() {
+		fullScan, err := newUdger("./udgerdb_v3.dat", false)
+		So(err, ShouldBeNil)
+		prefiltered, err := New("./udgerdb_v3.dat")
+		So(err, ShouldBeNil)
+
+		for _, ua := range userAgents {
+			expected, err := fullScan.Lookup(ua)
+			So(err, ShouldBeNil)
+			info, err := prefiltered.Lookup(ua)
+			So(err, ShouldBeNil)
+			So(info, ShouldResemble, expected)
+		}
+	})
+}
+
+// TestWordsPrefilterUserAgentsFile checks that Lookup gives the same result with and without the words prefilter on
+// every user agent of user-agents.txt (one per line). It is skipped when the file is missing. Full scans are slow
+// (~70 minutes for 500k user agents on 12 threads): run it with a larger timeout, e.g.
+// go test -run TestWordsPrefilterUserAgentsFile -timeout 120m -v
+// The logged lookup times are cumulated over concurrent workers: use the benchmarks to compare both modes.
+func TestWordsPrefilterUserAgentsFile(t *testing.T) {
+	file, err := os.Open("./user-agents.txt")
+	if os.IsNotExist(err) {
+		t.Skip("user-agents.txt not found")
+	}
 	if err != nil {
-		panic(err)
+		t.Fatal(err)
+	}
+	defer file.Close()
+
+	var uas []string
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+	for scanner.Scan() {
+		uas = append(uas, strings.TrimSuffix(scanner.Text(), "\r"))
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatal(err)
 	}
 
-	for i := 0; i < b.N; i++ {
-		_, err = udger.Lookup("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/49.0.2575.0 Safari/537.36")
-		if err != nil {
-			panic(err)
-		}
+	fullScan, err := newUdger("./udgerdb_v3.dat", false)
+	if err != nil {
+		t.Fatal(err)
 	}
+	prefiltered, err := New("./udgerdb_v3.dat")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	type mismatch struct {
+		ua             string
+		expected, info *Info
+	}
+	var (
+		mu                            sync.Mutex
+		mismatches                    []mismatch
+		fullScanTime, prefilteredTime atomic.Int64
+		wg                            sync.WaitGroup
+	)
+	jobs := make(chan string)
+	for w := 0; w < runtime.GOMAXPROCS(0); w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for ua := range jobs {
+				start := time.Now()
+				expected, err := fullScan.Lookup(ua)
+				fullScanTime.Add(int64(time.Since(start)))
+				if err != nil {
+					t.Errorf("full scan lookup of %q: %v", ua, err)
+					continue
+				}
+				start = time.Now()
+				info, err := prefiltered.Lookup(ua)
+				prefilteredTime.Add(int64(time.Since(start)))
+				if err != nil {
+					t.Errorf("prefiltered lookup of %q: %v", ua, err)
+					continue
+				}
+				if !reflect.DeepEqual(info, expected) {
+					mu.Lock()
+					mismatches = append(mismatches, mismatch{ua, expected, info})
+					mu.Unlock()
+				}
+			}
+		}()
+	}
+	for _, ua := range uas {
+		jobs <- ua
+	}
+	close(jobs)
+	wg.Wait()
+
+	t.Logf("%d user agents, cumulated lookup time: full scan %v, words prefilter %v",
+		len(uas), time.Duration(fullScanTime.Load()), time.Duration(prefilteredTime.Load()))
+	for i, m := range mismatches {
+		if i == 20 {
+			t.Errorf("... %d more mismatches", len(mismatches)-i)
+			break
+		}
+		t.Errorf("mismatch for %q:\nfull scan:       %+v\nwords prefilter: %+v", m.ua, *m.expected, *m.info)
+	}
+}
+
+func TestWordsPrefilter(t *testing.T) {
+	Convey("prefiltering regexes with words gives the same result as a full scan", t, func() {
+		udger, err := New("./udgerdb_v3.dat")
+		So(err, ShouldBeNil)
+
+		uas := append([]string{""}, userAgents...)
+		// a sample of crawlers, sorted to be deterministic: a full scan of all of them is too slow
+		var crawlers []string
+		for ua := range udger.Crawlers {
+			crawlers = append(crawlers, ua)
+		}
+		sort.Strings(crawlers)
+		for i := 0; i < len(crawlers); i += 20 {
+			uas = append(uas, crawlers[i])
+		}
+
+		for _, ua := range uas {
+			lowerUA := strings.ToLower(ua)
+			for _, table := range []struct {
+				rex         []rexData
+				words       []rexWord
+				withVersion bool
+			}{
+				{udger.rexBrowsers, udger.wordsBrowsers, true},
+				{udger.rexOS, udger.wordsOS, false},
+				{udger.rexDevices, udger.wordsDevices, false},
+			} {
+				fullID, fullVersion := udger.findDataWithVersion(ua, table.rex, nil, table.withVersion)
+				id, version := udger.findDataWithVersion(ua, table.rex, udger.findWords(lowerUA, table.words), table.withVersion)
+				So(id, ShouldEqual, fullID)
+				So(version, ShouldEqual, fullVersion)
+			}
+		}
+	})
+}
+
+// userAgents is a sample of common user agents: browsers, mobiles, smart TVs and libraries.
+// TestWordsPrefilterLookup checks that each of them gives the same Lookup result with and without the words prefilter.
+var userAgents = []string{
+	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/49.0.2575.0 Safari/537.36",
+	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0",
+	"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:131.0) Gecko/20100101 Firefox/131.0",
+	"Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1",
+	"Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36",
+	"Mozilla/5.0 (Linux; x86_64 GNU/Linux) AppleWebKit/601.1 (KHTML, like Gecko) Version/8.0 Safari/601.1 WPE AAMP/4.6",
+	"Mozilla/5.0 (SMART-TV; Linux; Tizen 6.0) AppleWebKit/538.1 (KHTML, like Gecko) Version/6.0 TV Safari/538.1",
+	"Mozilla/5.0 (Web0S; Linux/SmartTV) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.270 Safari/537.36 WebAppManager",
+	"Dalvik/2.1.0 (Linux; U; Android 11; BboxTV Build/RTT1.200907.001)",
+	"Roku/DVP-15.3 (15.3.4.2402-AE)",
+	"Apache-HttpClient/4.5.13 (Java/11.0.12)",
+	// matches a Fire OS regex through "AFTN" while Udger tags it with the word "fire" from another alternation branch
+	"XumoPlay/4.9.146 (Linux;Android 11; AFTNA1322D Build/RS8174.3641N)",
+}
+
+func BenchmarkUdger_LookupUserAgents(b *testing.B) {
+	benchmarkLookup(b, userAgents)
 }

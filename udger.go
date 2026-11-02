@@ -5,13 +5,21 @@ import (
 	"database/sql"
 	"os"
 	"regexp"
+	"regexp/syntax"
 	"strings"
+	"unicode"
 )
 
 const CRAWLER_CLASS_ID = 99
 
 // New creates a new instance of Udger from the dbPath database loaded in memory for fast lookup.
 func New(dbPath string) (*Udger, error) {
+	return newUdger(dbPath, true)
+}
+
+// newUdger creates a new instance of Udger. When wordsPrefilter is set, Lookup skips the browser, OS and device regexes
+// whose required words are absent from the user agent; otherwise every regex is evaluated, which tests use as reference.
+func newUdger(dbPath string, wordsPrefilter bool) (*Udger, error) {
 	u := &Udger{
 		Browsers:          make(map[int]Browser),
 		OS:                make(map[int]OS),
@@ -22,6 +30,7 @@ func New(dbPath string) (*Udger, error) {
 		browserOS:         make(map[int]int),
 		crawlerTypes:      make(map[int]string),
 		Crawlers:          make(map[string]Crawler),
+		wordsPrefilter:    wordsPrefilter,
 	}
 	var err error
 
@@ -47,7 +56,9 @@ func New(dbPath string) (*Udger, error) {
 func (udger *Udger) Lookup(ua string) (*Info, error) {
 	info := &Info{}
 
-	browserID, browserVersion := udger.findDataWithVersion(ua, udger.rexBrowsers, true)
+	lowerUA := strings.ToLower(ua)
+
+	browserID, browserVersion := udger.findDataWithVersion(ua, udger.rexBrowsers, udger.findWords(lowerUA, udger.wordsBrowsers), true)
 	if browser, found := udger.Browsers[browserID]; found {
 		info.Browser = browser
 		if info.Browser.Family != "" {
@@ -69,11 +80,11 @@ func (udger *Udger) Lookup(ua string) (*Info, error) {
 	if val, ok := udger.browserOS[browserID]; ok {
 		info.OS = udger.OS[val]
 	} else {
-		osID, _ := udger.findDataWithVersion(ua, udger.rexOS, false)
+		osID, _ := udger.findDataWithVersion(ua, udger.rexOS, udger.findWords(lowerUA, udger.wordsOS), false)
 		info.OS = udger.OS[osID]
 	}
 
-	deviceID, _ := udger.findDataWithVersion(ua, udger.rexDevices, false)
+	deviceID, _ := udger.findDataWithVersion(ua, udger.rexDevices, udger.findWords(lowerUA, udger.wordsDevices), false)
 
 	if val, ok := udger.Devices[deviceID]; ok {
 		info.Device = val
@@ -98,7 +109,7 @@ func (udger *Udger) Lookup(ua string) (*Info, error) {
 	}
 
 	// find device brand and market name
-	_, s := udger.findDataWithVersion(ua, udger.rexDeviceNames, true)
+	_, s := udger.findDataWithVersion(ua, udger.rexDeviceNames, nil, true)
 	if val, ok := udger.DevicesMarketName[s]; ok {
 		info.DeviceMarketName = val
 		info.DeviceBrand = udger.DevicesBrand[val.BrandID]
@@ -114,10 +125,37 @@ func (udger *Udger) cleanRegex(r string) string {
 	return r
 }
 
-func (udger *Udger) findDataWithVersion(ua string, data []rexData, withVersion bool) (int, string) {
+// findWords returns the IDs of the words contained in the lowercased user agent. ID 0 (no word) is always present.
+// It returns nil, meaning a full scan, when the words prefilter is disabled and for non-ASCII user agents:
+// case-insensitive regexes match some non-ASCII runes as ASCII letters (e.g. "ſ" matches "s"), which strings.Contains
+// would miss.
+func (udger *Udger) findWords(lowerUA string, words []rexWord) map[int]bool {
+	if !udger.wordsPrefilter {
+		return nil
+	}
+	for i := 0; i < len(lowerUA); i++ {
+		if lowerUA[i] > unicode.MaxASCII {
+			return nil
+		}
+	}
+	found := map[int]bool{0: true}
+	for _, w := range words {
+		if strings.Contains(lowerUA, w.Word) {
+			found[w.ID] = true
+		}
+	}
+	return found
+}
+
+// findDataWithVersion returns the ID of the first regex matching ua, and its first capture group if withVersion is set.
+// When foundWords is not nil, regexes whose words are not all in foundWords are skipped without being evaluated.
+func (udger *Udger) findDataWithVersion(ua string, data []rexData, foundWords map[int]bool, withVersion bool) (int, string) {
 	index := -1
 	version := ""
 	for i := 0; i < len(data); i++ {
+		if foundWords != nil && (!foundWords[data[i].WordID] || !foundWords[data[i].Word2ID]) {
+			continue
+		}
 		r := data[i].RegexCompiled
 		if !r.MatchString(ua) {
 			continue
@@ -151,13 +189,13 @@ func (udger *Udger) init() error {
 }
 
 func (udger *Udger) initBrowsers() error {
-	rows, err := udger.db.Query("SELECT client_id, regstring FROM udger_client_regex ORDER by sequence ASC")
+	rows, err := udger.db.Query("SELECT client_id, regstring, word_id, word2_id FROM udger_client_regex ORDER by sequence ASC")
 	if err != nil {
 		return err
 	}
 	for rows.Next() {
 		var d rexData
-		rows.Scan(&d.ID, &d.Regex)
+		rows.Scan(&d.ID, &d.Regex, &d.WordID, &d.Word2ID)
 		d.Regex = udger.cleanRegex(d.Regex)
 		// set case-insensitive flag withing current group
 		r, err := regexp.Compile("(?i)" + d.Regex)
@@ -168,6 +206,16 @@ func (udger *Udger) initBrowsers() error {
 		udger.rexBrowsers = append(udger.rexBrowsers, d)
 	}
 	rows.Close()
+
+	if udger.wordsPrefilter {
+		udger.wordsBrowsers, err = udger.loadWords("udger_client_regex_words")
+		if err != nil {
+			return err
+		}
+		if err := dropUnsafeWords(udger.rexBrowsers, udger.wordsBrowsers); err != nil {
+			return err
+		}
+	}
 
 	// Chrome, Safari, Firefox, etc.
 	rows, err = udger.db.Query("SELECT id, class_id, name,engine,vendor,icon FROM udger_client_list")
@@ -210,13 +258,13 @@ func (udger *Udger) initBrowsers() error {
 }
 
 func (udger *Udger) initDevices() error {
-	rows, err := udger.db.Query("SELECT deviceclass_id, regstring FROM udger_deviceclass_regex ORDER by sequence ASC")
+	rows, err := udger.db.Query("SELECT deviceclass_id, regstring, word_id, word2_id FROM udger_deviceclass_regex ORDER by sequence ASC")
 	if err != nil {
 		return err
 	}
 	for rows.Next() {
 		var d rexData
-		rows.Scan(&d.ID, &d.Regex)
+		rows.Scan(&d.ID, &d.Regex, &d.WordID, &d.Word2ID)
 		d.Regex = udger.cleanRegex(d.Regex)
 		r, err := regexp.Compile("(?i)" + d.Regex)
 		if err != nil {
@@ -226,6 +274,16 @@ func (udger *Udger) initDevices() error {
 		udger.rexDevices = append(udger.rexDevices, d)
 	}
 	rows.Close()
+
+	if udger.wordsPrefilter {
+		udger.wordsDevices, err = udger.loadWords("udger_deviceclass_regex_words")
+		if err != nil {
+			return err
+		}
+		if err := dropUnsafeWords(udger.rexDevices, udger.wordsDevices); err != nil {
+			return err
+		}
+	}
 
 	rows, err = udger.db.Query("SELECT id, name, icon FROM udger_deviceclass_list")
 	if err != nil {
@@ -285,13 +343,13 @@ func (udger *Udger) initDevices() error {
 }
 
 func (udger *Udger) initOS() error {
-	rows, err := udger.db.Query("SELECT os_id, regstring FROM udger_os_regex ORDER by sequence ASC")
+	rows, err := udger.db.Query("SELECT os_id, regstring, word_id, word2_id FROM udger_os_regex ORDER by sequence ASC")
 	if err != nil {
 		return err
 	}
 	for rows.Next() {
 		var d rexData
-		rows.Scan(&d.ID, &d.Regex)
+		rows.Scan(&d.ID, &d.Regex, &d.WordID, &d.Word2ID)
 		d.Regex = udger.cleanRegex(d.Regex)
 		r, err := regexp.Compile("(?i)" + d.Regex)
 		if err != nil {
@@ -301,6 +359,16 @@ func (udger *Udger) initOS() error {
 		udger.rexOS = append(udger.rexOS, d)
 	}
 	rows.Close()
+
+	if udger.wordsPrefilter {
+		udger.wordsOS, err = udger.loadWords("udger_os_regex_words")
+		if err != nil {
+			return err
+		}
+		if err := dropUnsafeWords(udger.rexOS, udger.wordsOS); err != nil {
+			return err
+		}
+	}
 
 	rows, err = udger.db.Query("SELECT id, name, family, vendor, icon FROM udger_os_list")
 	if err != nil {
@@ -313,6 +381,98 @@ func (udger *Udger) initOS() error {
 		udger.OS[id] = d
 	}
 	rows.Close()
+	return nil
+}
+
+func (udger *Udger) loadWords(table string) ([]rexWord, error) {
+	rows, err := udger.db.Query("SELECT id, word FROM " + table)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var words []rexWord
+	for rows.Next() {
+		var w rexWord
+		rows.Scan(&w.ID, &w.Word)
+		w.Word = strings.ToLower(w.Word)
+		words = append(words, w)
+	}
+	return words, nil
+}
+
+// dropUnsafeWords resets the words of a regex when they are not guaranteed to be in every string it matches.
+// Udger words are a hint and can come from a single branch of an alternation (e.g. "fire" in "(AFTN|Fire HD10)"):
+// prefiltering on them would skip regexes that do match.
+func dropUnsafeWords(data []rexData, words []rexWord) error {
+	wordByID := make(map[int]string, len(words))
+	for _, w := range words {
+		wordByID[w.ID] = w.Word
+	}
+	for i := range data {
+		re, err := syntax.Parse("(?i)"+data[i].Regex, syntax.Perl)
+		if err != nil {
+			return err
+		}
+		literals := requiredLiterals(re)
+		if !isRequiredWord(wordByID[data[i].WordID], literals) {
+			data[i].WordID = 0
+		}
+		if !isRequiredWord(wordByID[data[i].Word2ID], literals) {
+			data[i].Word2ID = 0
+		}
+	}
+	return nil
+}
+
+// isRequiredWord reports whether word is an ASCII substring of one of the required literals.
+func isRequiredWord(word string, literals []string) bool {
+	if word == "" {
+		return false
+	}
+	for i := 0; i < len(word); i++ {
+		if word[i] > unicode.MaxASCII {
+			return false
+		}
+	}
+	for _, l := range literals {
+		if strings.Contains(l, word) {
+			return true
+		}
+	}
+	return false
+}
+
+// requiredLiterals returns lowercased literals that every string matched by re contains.
+// It is conservative: alternations, optional and repeated-zero-times parts contribute nothing.
+func requiredLiterals(re *syntax.Regexp) []string {
+	switch re.Op {
+	case syntax.OpLiteral:
+		return []string{strings.ToLower(string(re.Rune))}
+	case syntax.OpCapture, syntax.OpPlus:
+		return requiredLiterals(re.Sub[0])
+	case syntax.OpRepeat:
+		if re.Min >= 1 {
+			return requiredLiterals(re.Sub[0])
+		}
+	case syntax.OpConcat:
+		var literals []string
+		run := ""
+		for _, sub := range re.Sub {
+			if sub.Op == syntax.OpLiteral {
+				run += strings.ToLower(string(sub.Rune))
+				continue
+			}
+			if run != "" {
+				literals = append(literals, run)
+				run = ""
+			}
+			literals = append(literals, requiredLiterals(sub)...)
+		}
+		if run != "" {
+			literals = append(literals, run)
+		}
+		return literals
+	}
 	return nil
 }
 
